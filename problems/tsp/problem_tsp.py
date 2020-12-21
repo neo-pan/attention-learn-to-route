@@ -46,7 +46,7 @@ class TSP(object):
 
     @staticmethod
     def make_dataset(*args, **kwargs):
-        model = kwargs["model"]
+        model = kwargs.pop("model")
         if model == "gnn":
             return _GNN_TSPDataset(*args, **kwargs)
         elif model in ["attention", "pointer"]:
@@ -170,7 +170,7 @@ class _TSPDataset(InMemoryDataset):
     def __init__(
         self, filename=None, size=50, num_samples=1000000, offset=0, distribution=None
     ):
-        super(TSPDataset, self).__init__()
+        super(_TSPDataset, self).__init__()
 
         self.data_set = []
         if filename is not None:
