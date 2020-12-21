@@ -4,13 +4,22 @@ from tqdm import tqdm
 import torch
 import math
 
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader as _DataLoader
+from torch_geometric.data import DataLoader as _GraphDataLoader
 from torch.nn import DataParallel
 
 from nets.attention_model import set_decode_type
 from utils.log_utils import log_values
 from utils import move_to
 
+
+def get_dataloader(opts):
+    if opts.model == "gnn":
+        DataLoader = _GraphDataLoader
+    else:
+        DataLoader = _DataLoader
+
+    return DataLoader
 
 def get_inner_model(model):
     return model.module if isinstance(model, DataParallel) else model
@@ -31,6 +40,8 @@ def rollout(model, dataset, opts):
     # Put in greedy evaluation mode!
     set_decode_type(model, "greedy")
     model.eval()
+
+    DataLoader = get_dataloader(opts)
 
     def eval_model_bat(bat):
         with torch.no_grad():
@@ -72,9 +83,10 @@ def train_epoch(model, optimizer, baseline, lr_scheduler, epoch, val_dataset, pr
     if not opts.no_tensorboard:
         tb_logger.log_value('learnrate_pg0', optimizer.param_groups[0]['lr'], step)
 
+    DataLoader = get_dataloader(opts)
     # Generate new training data for each epoch
     training_dataset = baseline.wrap_dataset(problem.make_dataset(
-        size=opts.graph_size, num_samples=opts.epoch_size, distribution=opts.data_distribution))
+        size=opts.graph_size, num_samples=opts.epoch_size, distribution=opts.data_distribution, model=opts.model))
     training_dataloader = DataLoader(training_dataset, batch_size=opts.batch_size, num_workers=1)
 
     # Put model in train mode!

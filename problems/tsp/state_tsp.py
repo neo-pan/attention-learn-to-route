@@ -1,6 +1,8 @@
 import torch
 from typing import NamedTuple
 from utils.boolmask import mask_long2bool, mask_long_scatter
+from torch_geometric.data import Data, Batch
+from torch_geometric.utils import to_dense_batch
 
 
 class StateTSP(NamedTuple):
@@ -39,7 +41,15 @@ class StateTSP(NamedTuple):
         )
 
     @staticmethod
-    def initialize(loc, visited_dtype=torch.uint8):
+    def initialize(data, visited_dtype=torch.uint8):
+        if isinstance(data, Batch):
+            loc, _mask = to_dense_batch(data.pos, data.batch)
+            assert _mask.all(), f"Only support batch of graphs with the same node numbers."
+        elif isinstance(data, torch.Tensor):
+            loc = data
+            assert loc.dim() == 3
+        else:
+            raise TypeError(f"Unsupported data type {type(data)}")
 
         batch_size, n_loc, _ = loc.size()
         prev_a = torch.zeros(batch_size, 1, dtype=torch.long, device=loc.device)

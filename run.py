@@ -12,6 +12,7 @@ from nets.critic_network import CriticNetwork
 from options import get_options
 from train import train_epoch, validate, get_inner_model
 from reinforce_baselines import NoBaseline, ExponentialBaseline, CriticBaseline, RolloutBaseline, WarmupBaseline
+from nets.gnn_model import GNNModel
 from nets.attention_model import AttentionModel
 from nets.pointer_network import PointerNetwork, CriticNetworkLSTM
 from utils import torch_load_cpu, load_problem
@@ -51,6 +52,7 @@ def run(opts):
 
     # Initialize model
     model_class = {
+        'gnn': GNNModel,
         'attention': AttentionModel,
         'pointer': PointerNetwork
     }.get(opts.model, None)
