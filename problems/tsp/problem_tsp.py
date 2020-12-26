@@ -1,17 +1,20 @@
 import os
 import os.path as osp
 import pickle
+from typing import List, Union
 
+import networkx.algorithms.tree.mst as mst
 import torch
 from problems.tsp.state_tsp import StateTSP
-from torch_geometric.data import Data, InMemoryDataset
+from torch_geometric.data import Batch, Data, InMemoryDataset
+from torch_geometric.transforms import Distance
+from torch_geometric.utils import from_networkx, to_dense_batch, to_networkx
 from utils.beam_search import beam_search
-from torch_geometric.data import Batch
-from torch_geometric.utils import to_dense_batch
-from typing import List
 
 _curdir = osp.dirname(osp.abspath(__file__))
 _fake_dataset_root = osp.join(_curdir, "FAKEDataset")
+_preloaded_data = {}
+
 
 class TSP(object):
 
@@ -47,7 +50,7 @@ class TSP(object):
     @staticmethod
     def make_dataset(*args, **kwargs):
         model = kwargs.pop("model")
-        if model == "gnn":
+        if model in ["gnn", "gnnff"]:
             return _GNN_TSPDataset(*args, **kwargs)
         elif model in ["attention", "pointer"]:
             return _TSPDataset(*args, **kwargs)
@@ -88,12 +91,20 @@ class TSP(object):
         return beam_search(state, beam_size, propose_expansions)
 
 
-def gen_fully_connected_graph(node_num: int, pos_feature: bool = True) -> Data:
+def gen_fully_connected_graph(data: Union[int, List[float]], pos_feature: bool = True) -> Data:
+    node_num = None
+    node_pos = None
+    if isinstance(data, int):
+        node_num = data
+    elif isinstance(data, list):
+        node_pos = data
+        node_num =len(node_pos)
+
     index = torch.arange(node_num).unsqueeze(-1).expand([-1, node_num])
     rol = torch.reshape(index, [-1])
     col = torch.reshape(torch.t(index), [-1])
     edge_index = torch.stack([rol, col], dim=0)
-    pos = torch.empty(size=(node_num, 2)).uniform_(0, 1)
+    pos = torch.tensor(node_pos) if node_pos else torch.empty(size=(node_num, 2)).uniform_(0, 1)
     node_feat = torch.tensor(
         [[0, 1] if i == 0 else [1, 0] for i in range(node_num)], dtype=torch.float,
     )
@@ -102,20 +113,22 @@ def gen_fully_connected_graph(node_num: int, pos_feature: bool = True) -> Data:
 
     return graph
 
-def gen_fully_connected_graph_with_pos(node_pos: List[float], pos_feature: bool = True) -> Data:
-    node_num = len(node_pos)
-    index = torch.arange(node_num).unsqueeze(-1).expand([-1, node_num])
-    rol = torch.reshape(index, [-1])
-    col = torch.reshape(torch.t(index), [-1])
-    edge_index = torch.stack([rol, col], dim=0)
-    pos = torch.tensor(node_pos)
-    node_feat = torch.tensor(
-        [[0, 1] if i == 0 else [1, 0] for i in range(node_num)], dtype=torch.float,
-    )
+def gen_mst_graph(data: Union[int, List[float]], pos_feature: bool = True) -> Data:
+    graph = gen_fully_connected_graph(data, pos_feature)
+    graph = Distance(cat=False)(graph)
+    nx_g = to_networkx(graph, edge_attrs=["edge_attr"], to_undirected=True)
+    nx_mst = mst.minimum_spanning_tree(nx_g, weight="edge_attr", algorithm="prim")
 
-    graph = Data(x=torch.cat([node_feat, pos], dim=-1), edge_index=edge_index, pos=pos)
+    mst_graph = from_networkx(nx_mst)
+    mst_graph.x = graph.x
+    mst_graph.pos = graph.pos
 
-    return graph
+    return mst_graph
+
+gen_methods = {
+    "complete": gen_fully_connected_graph,
+    "mst": gen_mst_graph
+}
 
 
 class _GNN_TSPDataset(InMemoryDataset):
@@ -128,19 +141,28 @@ class _GNN_TSPDataset(InMemoryDataset):
         distribution="complete",
     ):
 
+        gen_graph = gen_methods.get(distribution, None)
+        assert gen_graph, f"Unsupport graph distribution {distribution}"
         if filename is not None:
-            assert os.path.splitext(filename)[1] == ".pkl"
-
-            with open(filename, "rb") as f:
-                data = pickle.load(f)
+            global _preloaded_data
+            data = _preloaded_data.get(filename, None)
+            if data is None:
+                assert os.path.splitext(filename)[1] == ".pkl"
+                with open(filename, "rb") as f:
+                    data = pickle.load(f)
+                    _preloaded_data[filename] = data
+            if isinstance(data[0], list):
                 self.__data_list__ = [
-                    gen_fully_connected_graph_with_pos(row)
+                    gen_graph(row)
                     for row in data
                 ]
+            elif isinstance(data[0], Data):
+                indices = torch.randperm(len(data))[:num_samples]
+                self.__data_list__ = [data[idx] for idx in indices]
         else:
             # Sample points randomly in [0, 1] square
             self.__data_list__ = [
-                gen_fully_connected_graph(node_num=size) for i in range(num_samples)
+                gen_graph(size) for i in range(num_samples)
             ]
 
         self.size = len(self.__data_list__)

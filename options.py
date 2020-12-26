@@ -16,6 +16,7 @@ def get_options(args=None):
     parser.add_argument('--val_size', type=int, default=10000,
                         help='Number of instances used for reporting validation performance')
     parser.add_argument('--val_dataset', type=str, default=None, help='Dataset file to use for validation')
+    parser.add_argument('--train_dataset', type=str, default=None, help='Dataset file to use for training')
 
     # Model
     parser.add_argument('--model', default='attention', help="Model, 'attention' (default) or 'pointer'")

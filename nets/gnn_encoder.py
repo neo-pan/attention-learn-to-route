@@ -23,6 +23,78 @@ pooling_funcs = {
 }
 
 
+class GNNLayer(nn.Module):
+    def __init__(self, n_heads, embed_dim, normalization, feed_forward_hidden=512):
+        super().__init__()
+        self.n_heads = n_heads
+        self.embed_dim = embed_dim
+        assert self.embed_dim % self.n_heads == 0
+        if normalization == "batch":
+            norm_class = BatchNorm
+        else:
+            raise ValueError(f"Unsupported Normalization method: {normalization}")
+
+        self.gnn = TransformerConv(
+            in_channels=self.embed_dim,
+            out_channels=self.embed_dim // self.n_heads,
+            heads=self.n_heads,
+        )
+        self.norm = norm_class(in_channels=self.embed_dim)
+        self.feed_foward = nn.Sequential(
+            nn.Linear(self.embed_dim, feed_forward_hidden),
+            nn.ReLU(),
+            nn.Linear(feed_forward_hidden, self.embed_dim),
+            norm_class(in_channels=self.embed_dim),
+        )
+
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
+        x = self.gnn(x, edge_index)
+        x = self.norm(x)
+        x = self.feed_foward(x)
+
+        return x
+
+
+class GraphTransformerFFEncoder(nn.Module):
+    def __init__(
+        self,
+        n_heads,
+        embed_dim,
+        n_layers,
+        normalization="batch",
+        pooling="mean",
+        **kwarg,
+    ):
+        super().__init__()
+        self.n_heads = n_heads
+        self.embed_dim = embed_dim
+        assert self.embed_dim % self.n_heads == 0
+        self.n_layers = n_layers
+        self.pooling_func = pooling_funcs.get(pooling, None)
+        if self.pooling_func is None:
+            raise ValueError(f"Unsupported Pooling method: {pooling}")
+
+        gnn_layer_list = []
+
+        for _ in range(self.n_layers):
+            gnn_layer = GNNLayer(self.n_heads, self.embed_dim, normalization)
+            gnn_layer_list.append(gnn_layer)
+
+        self.gnn_layer_list = nn.ModuleList(gnn_layer_list)
+
+    def forward(self, data: Batch) -> Tuple[torch.Tensor, torch.Tensor]:
+        x = data.x
+        edge_index = data.edge_index
+        batch = data.batch
+        for gnn_layer in self.gnn_layer_list:
+            x = gnn_layer(x, edge_index)
+
+        dense_embeddings = to_dense_batch(x, batch)[0]
+        graph_embeddings = self.pooling_func(x, batch)
+
+        return (dense_embeddings, graph_embeddings)
+
+
 class GraphTransformerEncoder(nn.Module):
     def __init__(
         self,

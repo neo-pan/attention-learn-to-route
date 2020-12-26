@@ -12,7 +12,7 @@ from nets.critic_network import CriticNetwork
 from options import get_options
 from train import train_epoch, validate, get_inner_model
 from reinforce_baselines import NoBaseline, ExponentialBaseline, CriticBaseline, RolloutBaseline, WarmupBaseline
-from nets.gnn_model import GNNModel
+from nets.gnn_model import GNNModel, GNNFFModel
 from nets.attention_model import AttentionModel
 from nets.pointer_network import PointerNetwork, CriticNetworkLSTM
 from utils import torch_load_cpu, load_problem
@@ -53,6 +53,7 @@ def run(opts):
     # Initialize model
     model_class = {
         'gnn': GNNModel,
+        'gnnff': GNNFFModel,
         'attention': AttentionModel,
         'pointer': PointerNetwork
     }.get(opts.model, None)
@@ -69,6 +70,8 @@ def run(opts):
         checkpoint_encoder=opts.checkpoint_encoder,
         shrink_size=opts.shrink_size
     ).to(opts.device)
+
+    print(F"Total Model Parameters: {sum(param.numel() for param in model.parameters())}")
 
     if opts.use_cuda and torch.cuda.device_count() > 1:
         model = torch.nn.DataParallel(model)
