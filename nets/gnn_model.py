@@ -1,8 +1,10 @@
+from multiprocessing import Value
 import torch
 from torch import nn
 from torch.utils.checkpoint import checkpoint
 import math
 from typing import NamedTuple
+
 from utils.tensor_functions import compute_in_batches
 
 from torch_geometric.data import Batch
@@ -98,13 +100,16 @@ class GNNModel(nn.Module):
         else:  # TSP
             assert problem.NAME == "tsp", "Unsupported problem: {}".format(problem.NAME)
             step_context_dim = 2 * embedding_dim  # Embedding of first and last node
-            node_dim = 4  # x, y
+            node_dim = 2  # x, y
+            edge_dim = 1
 
             # Learned input symbols for first action
             self.W_placeholder = nn.Parameter(torch.Tensor(2 * embedding_dim))
             self.W_placeholder.data.uniform_(
                 -1, 1
             )  # Placeholder should be in range of activations
+
+            self.edge_embed = nn.Linear(edge_dim, embedding_dim)
 
         self.init_embed = nn.Linear(node_dim, embedding_dim)
 
@@ -225,30 +230,31 @@ class GNNModel(nn.Module):
     def _init_embed(self, input):
 
         if self.is_vrp or self.is_orienteering or self.is_pctsp:
-            if self.is_vrp:
-                features = ("demand",)
-            elif self.is_orienteering:
-                features = ("prize",)
-            else:
-                assert self.is_pctsp
-                features = ("deterministic_prize", "penalty")
-            return torch.cat(
-                (
-                    self.init_embed_depot(input["depot"])[:, None, :],
-                    self.init_embed(
-                        torch.cat(
-                            (
-                                input["loc"],
-                                *(input[feat][:, :, None] for feat in features),
-                            ),
-                            -1,
-                        )
-                    ),
-                ),
-                1,
-            )
+            # if self.is_vrp:
+            #     features = ("demand",)
+            # elif self.is_orienteering:
+            #     features = ("prize",)
+            # else:
+            #     assert self.is_pctsp
+            #     features = ("deterministic_prize", "penalty")
+            # return torch.cat(
+            #     (
+            #         self.init_embed_depot(input["depot"])[:, None, :],
+            #         self.init_embed(
+            #             torch.cat(
+            #                 (
+            #                     input["loc"],
+            #                     *(input[feat][:, :, None] for feat in features),
+            #                 ),
+            #                 -1,
+            #             )
+            #         ),
+            #     ),
+            #     1,
+            # )
+            raise ValueError(f"Unsupported problem: {self.problem.NAME}")
         # TSP
-        x = self.init_embed(input.x)
+        x = self.init_embed(input.pos)
         input.x = x
         return input
 

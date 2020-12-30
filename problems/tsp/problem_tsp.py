@@ -3,12 +3,16 @@ import os.path as osp
 import pickle
 from typing import List, Union
 
+import networkx as nx
 import networkx.algorithms.tree.mst as mst
 import torch
 from problems.tsp.state_tsp import StateTSP
+from scipy.spatial.distance import cdist
 from torch_geometric.data import Batch, Data, InMemoryDataset
+from torch_geometric.nn import knn_graph
 from torch_geometric.transforms import Distance
-from torch_geometric.utils import from_networkx, to_dense_batch, to_networkx
+from torch_geometric.utils import (from_networkx, to_dense_batch, to_networkx,
+                                   to_undirected)
 from utils.beam_search import beam_search
 
 _curdir = osp.dirname(osp.abspath(__file__))
@@ -30,7 +34,9 @@ class TSP(object):
 
         if isinstance(dataset, Batch):
             dataset, _mask = to_dense_batch(dataset.pos, dataset.batch)
-            assert _mask.all(), f"Only support batch of graphs with the same node numbers."
+            assert (
+                _mask.all()
+            ), f"Only support batch of graphs with the same node numbers."
         elif isinstance(dataset, torch.Tensor):
             dataset = dataset
             assert dataset.dim() == 3
@@ -91,20 +97,26 @@ class TSP(object):
         return beam_search(state, beam_size, propose_expansions)
 
 
-def gen_fully_connected_graph(data: Union[int, List[float]], pos_feature: bool = True) -> Data:
+def gen_fully_connected_graph(
+    data: Union[int, List[float]], pos_feature: bool = True
+) -> Data:
     node_num = None
     node_pos = None
     if isinstance(data, int):
         node_num = data
     elif isinstance(data, list):
         node_pos = data
-        node_num =len(node_pos)
+        node_num = len(node_pos)
 
     index = torch.arange(node_num).unsqueeze(-1).expand([-1, node_num])
     rol = torch.reshape(index, [-1])
     col = torch.reshape(torch.t(index), [-1])
     edge_index = torch.stack([rol, col], dim=0)
-    pos = torch.tensor(node_pos) if node_pos else torch.empty(size=(node_num, 2)).uniform_(0, 1)
+    pos = (
+        torch.tensor(node_pos)
+        if node_pos
+        else torch.empty(size=(node_num, 2)).uniform_(0, 1)
+    )
     node_feat = torch.tensor(
         [[0, 1] if i == 0 else [1, 0] for i in range(node_num)], dtype=torch.float,
     )
@@ -113,21 +125,70 @@ def gen_fully_connected_graph(data: Union[int, List[float]], pos_feature: bool =
 
     return graph
 
+
 def gen_mst_graph(data: Union[int, List[float]], pos_feature: bool = True) -> Data:
     graph = gen_fully_connected_graph(data, pos_feature)
-    graph = Distance(cat=False)(graph)
-    nx_g = to_networkx(graph, edge_attrs=["edge_attr"], to_undirected=True)
+    graph = Distance(norm=False, cat=False)(graph)
+    nx_g = to_networkx(
+        graph, node_attrs=["x", "pos"], edge_attrs=["edge_attr"], to_undirected=True
+    )
     nx_mst = mst.minimum_spanning_tree(nx_g, weight="edge_attr", algorithm="prim")
 
     mst_graph = from_networkx(nx_mst)
-    mst_graph.x = graph.x
-    mst_graph.pos = graph.pos
+    # mst_graph.x = graph.x
+    # mst_graph.pos = graph.pos
 
     return mst_graph
 
+
+def gen_knn_graph(
+    data: Union[int, List[float]], k=5, pos_feature: bool = True
+) -> Data:
+    graph = gen_fully_connected_graph(data, pos_feature)
+    edge_index = knn_graph(graph.pos, k=k, loop=False)
+    edge_index = to_undirected(edge_index)
+    graph.edge_index = edge_index
+    graph = Distance(norm=False, cat=False)(graph)
+
+    return graph
+
+
+def _gen_knn(dist, k):
+    g_size = dist.shape[0]
+    k_nn = dist.argsort()[:, 1 : k + 1]
+    edge_list = []
+    for u in range(g_size):
+        for v in k_nn[u]:
+            edge_list.append([u, v, {"is_mst": 0.0, "edge_attr": dist[u, v]}])
+    g = nx.Graph(edge_list)
+
+    return g
+
+
+def gen_knn_mst_graph(
+    data: Union[int, List[float]], k=5, pos_feature: bool = True
+) -> Data:
+    graph = gen_fully_connected_graph(data, pos_feature)
+    graph = Distance(norm=False, cat=False)(graph)
+    pos = graph.pos.numpy()
+    dist = cdist(pos, pos, metric="euclidean")
+    knn_g = _gen_knn(dist, k)
+    nx_g = to_networkx(
+        graph, node_attrs=["x", "pos"], edge_attrs=["edge_attr"], to_undirected=True
+    )
+    nx_mst = mst.minimum_spanning_tree(nx_g, weight="edge_attr", algorithm="prim")
+    nx.set_edge_attributes(nx_mst, 1.0, "is_mst")
+
+    knn_g.update(nx_mst)
+
+    return from_networkx(knn_g)
+
+
 gen_methods = {
     "complete": gen_fully_connected_graph,
-    "mst": gen_mst_graph
+    "mst": gen_mst_graph,
+    "knn": gen_knn_graph,
+    "knn_mst": gen_knn_mst_graph,
 }
 
 
@@ -152,18 +213,13 @@ class _GNN_TSPDataset(InMemoryDataset):
                     data = pickle.load(f)
                     _preloaded_data[filename] = data
             if isinstance(data[0], list):
-                self.__data_list__ = [
-                    gen_graph(row)
-                    for row in data
-                ]
+                self.__data_list__ = [gen_graph(row) for row in data]
             elif isinstance(data[0], Data):
                 indices = torch.randperm(len(data))[:num_samples]
                 self.__data_list__ = [data[idx] for idx in indices]
         else:
             # Sample points randomly in [0, 1] square
-            self.__data_list__ = [
-                gen_graph(size) for i in range(num_samples)
-            ]
+            self.__data_list__ = [gen_graph(size) for i in range(num_samples)]
 
         self.size = len(self.__data_list__)
         super(InMemoryDataset, self).__init__(root=_fake_dataset_root)
