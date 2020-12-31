@@ -255,7 +255,9 @@ class GNNModel(nn.Module):
             raise ValueError(f"Unsupported problem: {self.problem.NAME}")
         # TSP
         x = self.init_embed(input.pos)
+        edge_feat = self.edge_embed(input.is_mst)
         input.x = x
+        input.edge_feat = edge_feat
         return input
 
     def _inner(self, input, embeddings):

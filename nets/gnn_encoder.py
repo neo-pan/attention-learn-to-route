@@ -127,6 +127,7 @@ class GraphTransformerEncoder(nn.Module):
                 in_channels=self.embed_dim,
                 out_channels=self.embed_dim // self.n_heads,
                 heads=self.n_heads,
+                edge_dim=self.embed_dim
             )
             norm = norm_class(in_channels=self.embed_dim)
             gnn_list.append(gnn)
@@ -139,9 +140,10 @@ class GraphTransformerEncoder(nn.Module):
         x = data.x
         edge_index = data.edge_index
         batch = data.batch
+        edge_feat = data.edge_feat
 
         for gnn, norm in zip(self.gnn_list, self.norm_list):
-            x = x + gnn(x, edge_index)
+            x = x + gnn(x, edge_index, edge_feat)
             x = norm(x)
 
         dense_embeddings = to_dense_batch(x, batch)[0]

@@ -122,6 +122,7 @@ def gen_fully_connected_graph(
     )
 
     graph = Data(x=torch.cat([node_feat, pos], dim=-1), edge_index=edge_index, pos=pos)
+    graph = Distance(norm=False, cat=False)(graph)
 
     return graph
 
@@ -137,6 +138,8 @@ def gen_mst_graph(data: Union[int, List[float]], pos_feature: bool = True) -> Da
     mst_graph = from_networkx(nx_mst)
     # mst_graph.x = graph.x
     # mst_graph.pos = graph.pos
+    if mst_graph.edge_attr.ndim == 1:
+        mst_graph.edge_attr.unsqueeze_(-1)
 
     return mst_graph
 
@@ -180,8 +183,13 @@ def gen_knn_mst_graph(
     nx.set_edge_attributes(nx_mst, 1.0, "is_mst")
 
     knn_g.update(nx_mst)
+    pyg = from_networkx(knn_g)
+    if pyg.is_mst.ndim == 1:
+        pyg.is_mst.unsqueeze_(-1)
+    if pyg.edge_attr.ndim == 1:
+        pyg.edge_attr.unsqueeze_(-1)
 
-    return from_networkx(knn_g)
+    return pyg
 
 
 gen_methods = {
@@ -204,6 +212,7 @@ class _GNN_TSPDataset(InMemoryDataset):
 
         gen_graph = gen_methods.get(distribution, None)
         assert gen_graph, f"Unsupport graph distribution {distribution}"
+
         if filename is not None:
             global _preloaded_data
             data = _preloaded_data.get(filename, None)
