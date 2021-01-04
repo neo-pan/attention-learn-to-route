@@ -159,6 +159,7 @@ def run(opts):
     if opts.eval_only:
         validate(model, val_dataset, opts)
     else:
+        torch.autograd.set_detect_anomaly(True)
         for epoch in range(opts.epoch_start, opts.epoch_start + opts.n_epochs):
             train_epoch(
                 model,

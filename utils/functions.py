@@ -79,6 +79,7 @@ def load_args(filename):
 def load_model(path, epoch=None):
     from nets.attention_model import AttentionModel
     from nets.pointer_network import PointerNetwork
+    from nets.gnn_model import GNNModel, GNNFFModel
 
     if os.path.isfile(path):
         model_filename = path
@@ -99,6 +100,8 @@ def load_model(path, epoch=None):
     problem = load_problem(args['problem'])
 
     model_class = {
+        'gnn': GNNModel,
+        'gnnff': GNNFFModel,
         'attention': AttentionModel,
         'pointer': PointerNetwork
     }.get(args.get('model', 'attention'), None)

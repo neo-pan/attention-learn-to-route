@@ -7,12 +7,20 @@ import itertools
 from tqdm import tqdm
 from utils import load_model, move_to
 from utils.data_utils import save_dataset
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader as _DataLoader
+from torch_geometric.data import DataLoader as _GraphDataLoader
 import time
 from datetime import timedelta
 from utils.functions import parse_softmax_temperature
 mp = torch.multiprocessing.get_context('spawn')
 
+def get_dataloader(opts):
+    if opts.model in ["gnn", "gnnff"]:
+        DataLoader = _GraphDataLoader
+    else:
+        DataLoader = _DataLoader
+
+    return DataLoader
 
 def get_best(sequences, cost, ids=None, batch_size=None):
     """
@@ -51,7 +59,10 @@ def eval_dataset_mp(args):
 
 def eval_dataset(dataset_path, width, softmax_temp, opts):
     # Even with multiprocessing, we load the model here since it contains the name where to write results
-    model, _ = load_model(opts.model)
+    model, args = load_model(opts.model)
+    model_path = opts.model
+    opts.model = args["model"]
+    opts.data_distribution = args["data_distribution"]
     use_cuda = torch.cuda.is_available() and not opts.no_cuda
     if opts.multiprocessing:
         assert use_cuda, "Can only do multiprocessing with cuda"
@@ -66,7 +77,13 @@ def eval_dataset(dataset_path, width, softmax_temp, opts):
 
     else:
         device = torch.device("cuda:0" if use_cuda else "cpu")
-        dataset = model.problem.make_dataset(filename=dataset_path, num_samples=opts.val_size, offset=opts.offset, model=opts.model)
+        dataset = model.problem.make_dataset(
+            filename=dataset_path,
+            num_samples=opts.val_size,
+            offset=opts.offset,
+            model=opts.model,
+            distribution=opts.data_distribution,
+            )
         results = _eval_dataset(model, dataset, width, softmax_temp, opts, device)
 
     # This is parallelism, even if we use multiprocessing (we report as if we did not use multiprocessing, e.g. 1 GPU)
@@ -81,7 +98,7 @@ def eval_dataset(dataset_path, width, softmax_temp, opts):
     print("Calculated total duration: {}".format(timedelta(seconds=int(np.sum(durations) / parallelism))))
 
     dataset_basename, ext = os.path.splitext(os.path.split(dataset_path)[-1])
-    model_name = "_".join(os.path.normpath(os.path.splitext(opts.model)[0]).split(os.sep)[-2:])
+    model_name = "_".join(os.path.normpath(os.path.splitext(model_path)[0]).split(os.sep)[-2:])
     if opts.o is None:
         results_dir = os.path.join(opts.results_dir, model.problem.NAME, dataset_basename)
         os.makedirs(results_dir, exist_ok=True)
@@ -112,6 +129,7 @@ def _eval_dataset(model, dataset, width, softmax_temp, opts, device):
         "greedy" if opts.decode_strategy in ('bs', 'greedy') else "sampling",
         temp=softmax_temp)
 
+    DataLoader = get_dataloader(opts)
     dataloader = DataLoader(dataset, batch_size=opts.eval_batch_size)
 
     results = []
