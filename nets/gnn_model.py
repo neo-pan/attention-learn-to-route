@@ -255,7 +255,10 @@ class GNNModel(nn.Module):
             raise ValueError(f"Unsupported problem: {self.problem.NAME}")
         # TSP
         x = self.init_embed(input.pos)
-        edge_feat = self.edge_embed(input.is_mst)
+        if hasattr(input, "is_mst"):
+            edge_feat = self.edge_embed(input.is_mst)
+        else:
+            edge_feat = None
         input.x = x
         input.edge_feat = edge_feat
         return input

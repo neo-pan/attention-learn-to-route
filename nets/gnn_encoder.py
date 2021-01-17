@@ -97,17 +97,23 @@ class GraphTransformerFFEncoder(nn.Module):
             gnn_layer = GNNLayer(self.n_heads, self.embed_dim, normalization, concat=True)
             gnn_layer_list.append(gnn_layer)
         # Output layer of encoder, use 'average' instead of 'concat'
-        gnn_layer = GNNLayer(self.n_heads, self.embed_dim, normalization, concat=False)
+        gnn_layer = GNNLayer(self.n_heads, self.embed_dim, normalization, concat=True)
         gnn_layer_list.append(gnn_layer)
 
         self.gnn_layer_list = nn.ModuleList(gnn_layer_list)
+
+        # Add initial attention weights
+        # self.init_att = nn.Sequential(
+        #     nn.Linear(1, self.embed_dim),
+        #     nn.Linear(self.embed_dim, self.n_heads)
+        # )
 
     def forward(self, data: Batch) -> Tuple[torch.Tensor, torch.Tensor]:
         x = data.x
         edge_index = data.edge_index
         edge_feat = data.edge_feat
         batch = data.batch
-        alpha = None
+        alpha = data.is_mst.expand(-1, self.n_heads) if hasattr(data, "is_mst") else None
         for gnn_layer in self.gnn_layer_list:
             x, alpha = gnn_layer(x, edge_index, edge_feat, alpha)
             # x += out
@@ -166,8 +172,7 @@ class GraphTransformerEncoder(nn.Module):
         edge_feat = data.edge_feat
         alpha = None
         for gnn, norm in zip(self.gnn_list, self.norm_list):
-            out, alpha = gnn(x, edge_index, edge_feat, alpha)
-            x += out
+            x, alpha = gnn(x, edge_index, edge_feat, alpha)
             x = norm(x)
 
         dense_embeddings = to_dense_batch(x, batch)[0]
